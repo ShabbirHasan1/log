@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: gcc:13
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Verify version (Debugging)
+      run: |
+        gcc --version
+
+    - name: Build
+      run: 
+        gcc dev/main.c
+    
+    - name: Run
+      run:
+        ./a.out
