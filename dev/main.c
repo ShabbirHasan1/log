@@ -155,20 +155,37 @@ log_cleanup(log_ring_t *ring) {
   pthread_cond_destroy(&ring->not_empty);
   pthread_mutex_destroy(&ring->lock);
 }
+// log_time();                                                               \
+
+#define log(ring, type, color, format, ...)                                    \
+  {                                                                            \
+    log_entry_t entry;                                                         \
+    size_t      msg_len = strlen(format);                                      \
+    entry.msg           = calloc(msg_len, sizeof(entry.msg));                  \
+    snprintf(entry.msg, msg_len + 50, "%s%s\x1b[0m %s%s:%d:\x1b[0m \n", color, \
+             type, "\x1b[90m", __FILE__, __LINE__);                            \
+                                                                               \
+    entry.destination = LOG_TO_STDOUT;                                         \
+    log_submit(ring, &entry);                                                  \
+  }
+
+// strncpy(entry.msg, msg, msg_len);                                      \
+
+#define log_info(ring, format, ...) \
+  log(ring, "INFO ", "\x1b[32m", format, ##__VA_ARGS__)
 
 int
 main() {
   log_ring_t logger;
   log_init(&logger, "app.log");
-  log_message(&logger, "Some printf logging", LOG_TO_STDOUT);
-  log_message(&logger, "A log entry that will end up in app.log", LOG_TO_FILE);
-  log_message(&logger, "Another stdout printf log thingy", LOG_TO_STDOUT);
+  // log_message(&logger, "Some printf logging", LOG_TO_STDOUT);
+  // log_message(&logger, "A log entry that will end up in app.log",
+  // LOG_TO_FILE); Do some important work.... sleep(1); snprintf(char *restrict
+  // s, size_t maxlen, const char *restrict format, ...)
+  log_info(&logger, "hejsvej");
 
-  // Do some important work....
-  // sleep(1);
-
-  log_message(&logger, "More logs to stdout", LOG_TO_STDOUT);
-  log_message(&logger, "Another to the app.log file", LOG_TO_FILE);
+  // log_message(&logger, "Another stdout printf log thingy", LOG_TO_STDOUT);
+  // log_message(&logger, "Another to the app.log file", LOG_TO_FILE);
 
   log_cleanup(&logger);
   return 0;
