@@ -76,11 +76,13 @@ log_wait(log_ring_t *ring, log_entry_t *entry) {
   if (ring->head != ring->tail) {
     log_entry_t *next    = &ring->msgs[ring->tail];
     size_t       msg_len = strlen(next->msg);
-    entry->msg           = calloc(msg_len, sizeof(next->msg));
+    entry->msg           = calloc(msg_len + 1, sizeof(char));
 
     strncpy(entry->msg, next->msg, msg_len);
-    entry->destination = next->destination;
-    ring->tail         = (ring->tail + 1) % DEFAULT_RING_BUFFER_SIZE;
+    entry->msg[msg_len] = '\0';
+    entry->destination  = next->destination;
+    ring->tail          = (ring->tail + 1) % DEFAULT_RING_BUFFER_SIZE;
+
     free(next->msg);
     pthread_cond_signal(&ring->not_full);
   }
@@ -104,7 +106,7 @@ log_worker(void *arg) {
       fflush(stdout);
     }
 
-    free(entry.msg);
+    // free(entry.msg);
     if (ring->shutdown && ring->head == ring->tail) {
       break;  // Shutdown signal and empty
     }
@@ -112,15 +114,15 @@ log_worker(void *arg) {
   return NULL;
 }
 
-void
-log_message(log_ring_t *ring, const char *msg, log_output_t destination) {
-  log_entry_t entry;
-  size_t      msg_len = strlen(msg);
-  entry.msg           = calloc(msg_len, sizeof(entry.msg));
-  strncpy(entry.msg, msg, msg_len);
-  entry.destination = destination;
-  log_submit(ring, &entry);
-}
+// void
+// log_message(log_ring_t *ring, const char *msg, log_output_t destination) {
+//   log_entry_t entry;
+//   size_t      msg_len = strlen(msg);
+//   entry.msg           = calloc(msg_len, sizeof(entry.msg));
+//   strncpy(entry.msg, msg, msg_len);
+//   entry.destination = destination;
+//   log_submit(ring, &entry);
+// }
 
 void
 log_init(log_ring_t *ring, const char *log_file_path) {
@@ -155,24 +157,35 @@ log_cleanup(log_ring_t *ring) {
   pthread_cond_destroy(&ring->not_empty);
   pthread_mutex_destroy(&ring->lock);
 }
-// log_time();                                                               \
 
-#define log(ring, type, color, format, ...)                                    \
-  {                                                                            \
-    log_entry_t entry;                                                         \
-    size_t      msg_len = strlen(format);                                      \
-    entry.msg           = calloc(msg_len, sizeof(entry.msg));                  \
-    snprintf(entry.msg, msg_len + 50, "%s%s\x1b[0m %s%s:%d:\x1b[0m \n", color, \
-             type, "\x1b[90m", __FILE__, __LINE__);                            \
-                                                                               \
-    entry.destination = LOG_TO_STDOUT;                                         \
-    log_submit(ring, &entry);                                                  \
+#define log(ring, type, color, format, ...)                                   \
+  {                                                                           \
+    log_entry_t entry;                                                        \
+    int prefix_len = snprintf(NULL, 0, "%s%s\x1b[0m %s%s:%d\x1b[0m ", color,  \
+                              type, "\x1b[90m", __FILE__, __LINE__);          \
+    int msg_len    = snprintf(NULL, 0, format, ##__VA_ARGS__);                \
+    int total_len  = prefix_len + msg_len + 1;                                \
+    entry.msg      = calloc(total_len, sizeof(char *));                       \
+    snprintf(entry.msg, prefix_len + 1, "%s%s\x1b[0m %s%s:%d\x1b[0m ", color, \
+             type, "\x1b[90m", __FILE__, __LINE__);                           \
+    snprintf(entry.msg + prefix_len, msg_len + 1, format, ##__VA_ARGS__);     \
+    entry.destination = LOG_TO_STDOUT;                                        \
+    log_submit(ring, &entry);                                                 \
   }
-
-// strncpy(entry.msg, msg, msg_len);                                      \
 
 #define log_info(ring, format, ...) \
   log(ring, "INFO ", "\x1b[32m", format, ##__VA_ARGS__)
+
+#define TIME_A_BLOCK_NS(x)                                  \
+  ({                                                        \
+    struct timespec __start, __end;                         \
+    clock_gettime(CLOCK_MONOTONIC_RAW, &__start);           \
+    x;                                                      \
+    clock_gettime(CLOCK_MONOTONIC_RAW, &__end);             \
+    ulong __delta = (__end.tv_sec - __start.tv_sec) * 1e9 + \
+                    (__end.tv_nsec - __start.tv_nsec);      \
+    __delta;                                                \
+  })
 
 int
 main() {
@@ -180,9 +193,17 @@ main() {
   log_init(&logger, "app.log");
   // log_message(&logger, "Some printf logging", LOG_TO_STDOUT);
   // log_message(&logger, "A log entry that will end up in app.log",
-  // LOG_TO_FILE); Do some important work.... sleep(1); snprintf(char *restrict
-  // s, size_t maxlen, const char *restrict format, ...)
-  log_info(&logger, "hejsvej");
+  // LOG_TO_FILE); Do some important work.... sleep(1); snprintf(char
+  // *restrict s, size_t maxlen, const char *restrict format, ...)
+  int         num = 5;
+  const char *str = "hejsvejhejsvejhejsvejhejsvejhejsvejhejsvejhejsvejhejsvej";
+  unsigned long long ns = TIME_A_BLOCK_NS({
+    log_info(&logger, "num: %d, str: %s", num, str);
+    // log_info(&logger, "num: %d, str: %s", num, str);
+    // log_info(&logger, "num: %d, str: %s", num, str);
+    // log_info(&logger, "num: %d, str: %s", num, str);
+  });
+  printf("time: %llu\n", ns);
 
   // log_message(&logger, "Another stdout printf log thingy", LOG_TO_STDOUT);
   // log_message(&logger, "Another to the app.log file", LOG_TO_FILE);
