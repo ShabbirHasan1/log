@@ -62,6 +62,7 @@ log_submit(log_ring_t *ring, log_entry_t *msg) {
   }
   ring->msgs[ring->head] = *msg;
   ring->head             = (ring->head + 1) % DEFAULT_RING_BUFFER_SIZE;
+
   pthread_cond_signal(&ring->not_empty);
   pthread_mutex_unlock(&ring->lock);
 }
@@ -81,12 +82,11 @@ log_wait(log_ring_t *ring, log_entry_t *entry) {
     strncpy(entry->msg, next->msg, msg_len);
     entry->msg[msg_len] = '\0';
     entry->destination  = next->destination;
-    ring->tail          = (ring->tail + 1) % DEFAULT_RING_BUFFER_SIZE;
-
     free(next->msg);
+    ring->tail = (ring->tail + 1) % DEFAULT_RING_BUFFER_SIZE;
+
     pthread_cond_signal(&ring->not_full);
   }
-
   pthread_mutex_unlock(&ring->lock);
 }
 
@@ -98,15 +98,19 @@ log_worker(void *arg) {
   while (1) {
     log_wait(ring, &entry);
 
-    if (entry.destination == LOG_TO_FILE && ring->log_file) {
-      fprintf(ring->log_file, "%s\n", entry.msg);
-      fflush(ring->log_file);
-    } else {
-      printf("%s\n", entry.msg);
-      fflush(stdout);
+    if (entry.msg) {
+      if (entry.destination == LOG_TO_FILE && ring->log_file) {
+        fprintf(ring->log_file, "%s\n", entry.msg);
+        fflush(ring->log_file);
+      } else {
+        printf("%s\n", entry.msg);
+        fflush(stdout);
+      }
+
+      free(entry.msg);
+      entry.msg = NULL;
     }
 
-    // free(entry.msg);
     if (ring->shutdown && ring->head == ring->tail) {
       break;  // Shutdown signal and empty
     }
@@ -158,19 +162,22 @@ log_cleanup(log_ring_t *ring) {
   pthread_mutex_destroy(&ring->lock);
 }
 
-#define log(ring, type, color, format, ...)                                   \
-  {                                                                           \
-    log_entry_t entry;                                                        \
-    int prefix_len = snprintf(NULL, 0, "%s%s\x1b[0m %s%s:%d\x1b[0m ", color,  \
-                              type, "\x1b[90m", __FILE__, __LINE__);          \
-    int msg_len    = snprintf(NULL, 0, format, ##__VA_ARGS__);                \
-    int total_len  = prefix_len + msg_len + 1;                                \
-    entry.msg      = calloc(total_len, sizeof(char *));                       \
-    snprintf(entry.msg, prefix_len + 1, "%s%s\x1b[0m %s%s:%d\x1b[0m ", color, \
-             type, "\x1b[90m", __FILE__, __LINE__);                           \
-    snprintf(entry.msg + prefix_len, msg_len + 1, format, ##__VA_ARGS__);     \
-    entry.destination = LOG_TO_STDOUT;                                        \
-    log_submit(ring, &entry);                                                 \
+#define log(ring, type, color, format, ...)                                    \
+  {                                                                            \
+    log_entry_t        entry;                                                  \
+    unsigned long long ns = TIME_A_BLOCK_NS({                                  \
+      int prefix_len = snprintf(NULL, 0, "%s%s\x1b[0m %s%s:%d\x1b[0m ", color, \
+                                type, "\x1b[90m", __FILE__, __LINE__);         \
+      int msg_len    = snprintf(NULL, 0, format, ##__VA_ARGS__);               \
+      int total_len  = prefix_len + msg_len + 1;                               \
+      entry.msg      = calloc(total_len, sizeof(char *));                      \
+      snprintf(entry.msg, prefix_len + 1, "%s%s\x1b[0m %s%s:%d\x1b[0m ",       \
+               color, type, "\x1b[90m", __FILE__, __LINE__);                   \
+      snprintf(entry.msg + prefix_len, msg_len + 1, format, ##__VA_ARGS__);    \
+      entry.destination = LOG_TO_STDOUT;                                       \
+    });                                                                        \
+    printf("time: %llu\n", ns);                                                \
+    log_submit(ring, &entry);                                                  \
   }
 
 #define log_info(ring, format, ...) \
@@ -197,13 +204,11 @@ main() {
   // *restrict s, size_t maxlen, const char *restrict format, ...)
   int         num = 5;
   const char *str = "hejsvejhejsvejhejsvejhejsvejhejsvejhejsvejhejsvejhejsvej";
-  unsigned long long ns = TIME_A_BLOCK_NS({
-    log_info(&logger, "num: %d, str: %s", num, str);
-    // log_info(&logger, "num: %d, str: %s", num, str);
-    // log_info(&logger, "num: %d, str: %s", num, str);
-    // log_info(&logger, "num: %d, str: %s", num, str);
-  });
-  printf("time: %llu\n", ns);
+  log_info(&logger, "num: %d, str: %s", num, str);
+  // log_info(&logger, "num: %d, str: %s", num, str);
+  // log_info(&logger, "num: %d, str: %s", num, str);
+  // log_info(&logger, "num: %d, str: %s", num, str);
+  // });
 
   // log_message(&logger, "Another stdout printf log thingy", LOG_TO_STDOUT);
   // log_message(&logger, "Another to the app.log file", LOG_TO_FILE);
